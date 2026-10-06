@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ploot
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-app_dev_only}
+      TOKEN_ENC_KEY: ${TOKEN_ENC_KEY:-dev-only-token-key}
+    ports: ["55432:5432"]
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ploot"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mock:
+    build: ./mock
+    environment:
+      PORT: 4000
+      MOCK_429_RATE: ${MOCK_429_RATE:-0.1}
+      MOCK_5XX_RATE: ${MOCK_5XX_RATE:-0.1}
+    ports: ["4000:4000"]
+
+  worker:
+    build: ./worker
+    depends_on:
+      db: { condition: service_healthy }
+      mock: { condition: service_started }
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/ploot
+      PROVIDER_URL: http://mock:4000
+      TOKEN_ENC_KEY: ${TOKEN_ENC_KEY:-dev-only-token-key}
+      GLOBAL_MAX_IN_FLIGHT: 10
+    deploy:
+      replicas: 2
+
+  app:
+    build: ./app
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgres://app_user:${APP_DB_PASSWORD:-app_dev_only}@db:5432/ploot
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-at-least-32-chars}
+    ports: ["3000:3000"]

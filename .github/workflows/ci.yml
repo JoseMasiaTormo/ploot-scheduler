@@ -1,0 +1,37 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ploot
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-retries 30
+    env:
+      APP_DB_PASSWORD: app_dev_only
+      TOKEN_ENC_KEY: dev-only-token-key
+      JWT_SECRET: dev-only-jwt-secret-at-least-32-chars
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Esquema, roles y seed
+        run: for f in db/init/*.sql; do PGPASSWORD=postgres psql -h localhost -p 55432 -U postgres -d ploot -v ON_ERROR_STOP=1 -f "$f"; done
+      - name: Mock del proveedor
+        run: cd mock && npm install && (node server.js &)
+      - name: Worker (tipos + tests de N réplicas y crash)
+        run: cd worker && npm ci && npm run typecheck && npm test
+      - name: App (tipos + tests de aislamiento y DST + build)
+        run: cd app && npm ci && npx tsc --noEmit && npm test && npm run build
